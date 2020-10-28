@@ -1,5 +1,6 @@
 import heapq
 import numpy as np
+import scipy.stats as sps
 
 
 def load_subword_nmt_table(path):
@@ -170,7 +171,38 @@ class BpeOnlineTokenizer:
         :return:
         """
         return tokenize_text(self.merge_table, line, self.bpe_dropout_rate, self.random_generator, **args)
-    
+
+
+class BpeVariationalTokenizer:
+    def __init__(self, bpe_dropout_rates, merge_table, random_seed=None):
+        """
+        :param bpe_dropout_rates: np.array of floats [0, 0) with shape (len(merge_table)
+        :param merge_table: dict [(token_1, token_2)] -> priority
+        """
+
+        self.random_generator = np.random.RandomState(random_seed)
+        self.bpe_dropout_rates = bpe_dropout_rates
+        self.merge_table = merge_table
+
+    def __call__(self, line, **args):
+        """
+        :param line: str
+        :return: tokenized line
+        """
+        drop_item = sps.bernoulli.rvs(p=self.bpe_dropout_rates)
+        dropped_merge_table = dict()
+
+        for item, idx in zip(self.merge_table.items(), range(len(self.merge_table))):
+            if not drop_item[idx]:
+                dropped_merge_table[item[0]] = item[1]
+
+        return tokenize_text(
+            rules=dropped_merge_table,
+            line=line,
+            dropout=0,  # Set to 0 to get pure BPE tokenization
+            random_generator=self.random_generator,
+            **args)
+
 
 class BpeOnlineParallelApplier:
     """
