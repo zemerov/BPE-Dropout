@@ -37,7 +37,9 @@ def tokenize_word(merge_rules, word, dropout=0.0,
                   sentinels=['^', '$'],
                   regime='begin',
                   bpe_symbol='`',
-                  always_merge_sentinels=True):
+                  always_merge_sentinels=True,
+
+                  ):
     """ Tokenize word using bpe merge rules
     :param merge_rules: dict [(a,b)] -> id, merge table, ids are in increasing order
     :param word: string
@@ -54,6 +56,8 @@ def tokenize_word(merge_rules, word, dropout=0.0,
     
     # Subword tokens
     sw_tokens = list(word)
+
+    used_merges = []
 
     # Add sentinels
     if always_merge_sentinels:
@@ -180,19 +184,23 @@ class BpeVariationalTokenizer:
         :param merge_table: dict [(token_1, token_2)] -> priority
         """
 
+        assert bpe_dropout_rates.shape[0] == len(merge_table), "Dropout rates array`s shape " \
+                                                               "should match merge table`s shape"
+
         self.random_generator = np.random.RandomState(random_seed)
         self.bpe_dropout_rates = bpe_dropout_rates
         self.merge_table = merge_table
+        self.random_state = random_seed
 
     def __call__(self, line, **args):
         """
         :param line: str
         :return: tokenized line
         """
-        drop_item = sps.bernoulli.rvs(p=self.bpe_dropout_rates)
+        drop_item = sps.bernoulli.rvs(p=self.bpe_dropout_rates, random_state=self.random_state)
         dropped_merge_table = dict()
 
-        for item, idx in zip(self.merge_table.items(), range(len(self.merge_table))):
+        for idx, item in enumerate(self.merge_table.items()):
             if not drop_item[idx]:
                 dropped_merge_table[item[0]] = item[1]
 
