@@ -57,7 +57,7 @@ def tokenize_word(merge_rules, word, dropout=0.0,
     # Subword tokens
     sw_tokens = list(word)
 
-    used_merges = []
+    used_merges_priorities = set()
 
     # Add sentinels
     if always_merge_sentinels:
@@ -99,6 +99,8 @@ def tokenize_word(merge_rules, word, dropout=0.0,
         if random_generator.rand() < dropout:
             dropped_merges.append([cur_priority, cur_pos])
             continue
+
+        used_merges_priorities.add(cur_priority)
 
         sw_tokens[cur_pos:cur_pos + 2] = [cur + nxt]
         sw_length -= 1
@@ -149,11 +151,15 @@ def tokenize_word(merge_rules, word, dropout=0.0,
             sw_tokens = sw_tokens[:-1]
             sw_tokens[-1] = sw_tokens[-1].rstrip(bpe_symbol)
         
-    return sw_tokens
+    return sw_tokens, used_merges_priorities
 
 
 def tokenize_text(rules, line, dropout=0.0, random_generator=np.random.RandomState(), **args):
-    return ' '.join([' '.join(tokenize_word(rules, word, dropout, random_generator, **args)) for word in line.split(' ')])
+    tokenization_pairs = [tokenize_word(rules, word, dropout, random_generator, **args) for word in line.split(' ')]
+    tokenized_string = ' '.join([' '.join(pair[0]) for pair in tokenization_pairs])
+    used_merges = set().union(*[pair[1] for pair in tokenization_pairs])
+
+    return tokenized_string, used_merges
 
 
 class BpeOnlineTokenizer:
@@ -174,7 +180,9 @@ class BpeOnlineTokenizer:
         :param line: str
         :return:
         """
-        return tokenize_text(self.merge_table, line, self.bpe_dropout_rate, self.random_generator, **args)
+
+        tokenized_str, _ = tokenize_text(self.merge_table, line, self.bpe_dropout_rate, self.random_generator, **args)
+        return tokenized_str
 
 
 class BpeVariationalTokenizer:
@@ -195,7 +203,7 @@ class BpeVariationalTokenizer:
     def __call__(self, line, **args):
         """
         :param line: str
-        :return: tokenized line
+        :return: tokenized line, used_merge_indexes
         """
         drop_item = sps.bernoulli.rvs(p=self.bpe_dropout_rates, random_state=self.random_state)
         dropped_merge_table = dict()
@@ -203,7 +211,7 @@ class BpeVariationalTokenizer:
         for idx, item in enumerate(self.merge_table.items()):
             if not drop_item[idx]:
                 dropped_merge_table[item[0]] = item[1]
-
+        print(dropped_merge_table)
         return tokenize_text(
             rules=dropped_merge_table,
             line=line,
