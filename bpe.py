@@ -211,7 +211,7 @@ class BpeVariationalTokenizer:
         for idx, item in enumerate(self.merge_table.items()):
             if not drop_item[idx]:
                 dropped_merge_table[item[0]] = item[1]
-        
+
         return tokenize_text(
             rules=dropped_merge_table,
             line=line,
