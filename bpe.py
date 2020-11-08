@@ -1,5 +1,6 @@
 import heapq
 import numpy as np
+import scipy.stats as sps
 
 
 def load_subword_nmt_table(path):
@@ -36,7 +37,9 @@ def tokenize_word(merge_rules, word, dropout=0.0,
                   sentinels=['^', '$'],
                   regime='begin',
                   bpe_symbol='`',
-                  always_merge_sentinels=True):
+                  always_merge_sentinels=True,
+
+                  ):
     """ Tokenize word using bpe merge rules
     :param merge_rules: dict [(a,b)] -> id, merge table, ids are in increasing order
     :param word: string
@@ -53,6 +56,8 @@ def tokenize_word(merge_rules, word, dropout=0.0,
     
     # Subword tokens
     sw_tokens = list(word)
+
+    used_merges_priorities = set()
 
     # Add sentinels
     if always_merge_sentinels:
@@ -94,6 +99,8 @@ def tokenize_word(merge_rules, word, dropout=0.0,
         if random_generator.rand() < dropout:
             dropped_merges.append([cur_priority, cur_pos])
             continue
+
+        used_merges_priorities.add(cur_priority)
 
         sw_tokens[cur_pos:cur_pos + 2] = [cur + nxt]
         sw_length -= 1
@@ -144,11 +151,15 @@ def tokenize_word(merge_rules, word, dropout=0.0,
             sw_tokens = sw_tokens[:-1]
             sw_tokens[-1] = sw_tokens[-1].rstrip(bpe_symbol)
         
-    return sw_tokens
+    return sw_tokens, used_merges_priorities
 
 
 def tokenize_text(rules, line, dropout=0.0, random_generator=np.random.RandomState(), **args):
-    return ' '.join([' '.join(tokenize_word(rules, word, dropout, random_generator, **args)) for word in line.split(' ')])
+    tokenization_pairs = [tokenize_word(rules, word, dropout, random_generator, **args) for word in line.split(' ')]
+    tokenized_string = ' '.join([' '.join(pair[0]) for pair in tokenization_pairs])
+    used_merges = set().union(*[pair[1] for pair in tokenization_pairs])
+
+    return tokenized_string, used_merges
 
 
 class BpeOnlineTokenizer:
@@ -169,8 +180,45 @@ class BpeOnlineTokenizer:
         :param line: str
         :return:
         """
-        return tokenize_text(self.merge_table, line, self.bpe_dropout_rate, self.random_generator, **args)
-    
+
+        tokenized_str, _ = tokenize_text(self.merge_table, line, self.bpe_dropout_rate, self.random_generator, **args)
+        return tokenized_str
+
+
+class BpeVariationalTokenizer:
+    def __init__(self, bpe_dropout_rates, merge_table, random_seed=None):
+        """
+        :param bpe_dropout_rates: np.array of floats [0, 0) with shape (len(merge_table)
+        :param merge_table: dict [(token_1, token_2)] -> priority
+        """
+
+        assert bpe_dropout_rates.shape[0] == len(merge_table), "Dropout rates array`s shape " \
+                                                               "should match merge table`s shape"
+
+        self.random_generator = np.random.RandomState(random_seed)
+        self.bpe_dropout_rates = bpe_dropout_rates
+        self.merge_table = merge_table
+        self.random_state = random_seed
+
+    def __call__(self, line, **args):
+        """
+        :param line: str
+        :return: tokenized line, used_merge_indexes
+        """
+        drop_item = sps.bernoulli.rvs(p=self.bpe_dropout_rates, random_state=self.random_state)
+        dropped_merge_table = dict()
+
+        for idx, item in enumerate(self.merge_table.items()):
+            if not drop_item[idx]:
+                dropped_merge_table[item[0]] = item[1]
+
+        return tokenize_text(
+            rules=dropped_merge_table,
+            line=line,
+            dropout=0,  # Set to 0 to get pure BPE tokenization
+            random_generator=self.random_generator,
+            **args)
+
 
 class BpeOnlineParallelApplier:
     """
